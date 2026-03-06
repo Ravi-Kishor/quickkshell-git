@@ -49,10 +49,14 @@ jobs:
             cd ~ &&
             git clone https://aur.archlinux.org/cpptrace.git &&
             cd cpptrace &&
-            makepkg -si --noconfirm
+            makepkg -s --noconfirm
           "
 
-      - name: Create PKGBUILD
+      - name: Install cpptrace for build environment
+        run: |
+          pacman -U --noconfirm /home/builder/cpptrace/*.pkg.tar.zst
+
+      - name: Create quickshell PKGBUILD
         run: |
           cat << 'EOF' > /home/builder/PKGBUILD
           pkgname=quickshell-git
@@ -64,6 +68,7 @@ jobs:
           license=(LGPL-3.0-only)
 
           depends=(
+            cpptrace
             gcc-libs
             glibc
             hicolor-icon-theme
@@ -89,7 +94,6 @@ jobs:
             spirv-tools
             wayland-protocols
             git
-            cpptrace
             vulkan-headers
           )
 
@@ -103,7 +107,6 @@ jobs:
 
           build() {
             cd quickshell
-
             export CFLAGS="-O2 -pipe -march=x86-64-v3"
             export CXXFLAGS="-O2 -pipe -march=x86-64-v3"
 
@@ -121,27 +124,25 @@ jobs:
           }
           EOF
 
-      - name: Build package
+      - name: Build quickshell package
         run: |
           chown -R builder:builder /home/builder
           su builder -c "cd ~ && makepkg -s --noconfirm"
 
-      - name: Prepare release
+      - name: Prepare release files
         id: pkg
         run: |
-          PKG_PATH=$(ls /home/builder/quickshell-git-*.pkg.tar.zst | head -n 1)
-          PKG_FILE=$(basename "$PKG_PATH")
-          VERSION=$(echo "$PKG_FILE" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
-
           mkdir release
-          cp "$PKG_PATH" "release/quickshell-git-${VERSION}-x86_64_v3.pkg.tar.zst"
+          cp /home/builder/cpptrace/*.pkg.tar.zst release/
+          cp /home/builder/quickshell-git-*.pkg.tar.zst release/
 
+          VERSION=$(basename $(ls /home/builder/quickshell-git-*.pkg.tar.zst) | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quickshell-git-${{ steps.pkg.outputs.version }}-x86_64_v3
+          name: quickshell-release
           path: release/*.pkg.tar.zst
 
       - name: Create GitHub Release
