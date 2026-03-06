@@ -34,7 +34,8 @@ jobs:
           pacman -S --noconfirm \
             cmake ninja cli11 qt6-base qt6-declarative qt6-svg \
             qt6-wayland qt6-shadertools spirv-tools wayland-protocols \
-            jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit
+            jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit \
+            vulkan-headers vulkan-icd-loader
 
       - name: Create builder user
         run: |
@@ -89,6 +90,7 @@ jobs:
             wayland-protocols
             git
             cpptrace
+            vulkan-headers
           )
 
           source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
@@ -96,7 +98,6 @@ jobs:
 
           pkgver() {
             cd quickshell
-            # Fallback for when there are no git tags
             git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
           }
 
@@ -128,7 +129,6 @@ jobs:
       - name: Prepare release
         id: pkg
         run: |
-          # Specifically target the quickshell-git package to avoid conflicts
           PKG_PATH=$(ls /home/builder/quickshell-git-*.pkg.tar.zst | head -n 1)
           PKG_FILE=$(basename "$PKG_PATH")
           VERSION=$(echo "$PKG_FILE" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
