@@ -31,32 +31,45 @@ RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
 TAG_NAME=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
 echo "Latest release tag: $TAG_NAME"
 
-# Prefer x86_64_v3, fallback to generic
-ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '
+# Find quickshell asset (prefer v3)
+QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
   .assets[]
   | select(.name | test("^quickshell-git-.*-x86_64_v3\\.pkg\\.tar\\.zst$"))
   | .browser_download_url
 ' | head -n1)
 
-if [[ -z "$ASSET_URL" || "$ASSET_URL" == "null" ]]; then
-  ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '
+if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
+  QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
     .assets[]
     | select(.name | test("^quickshell-git-.*-x86_64\\.pkg\\.tar\\.zst$"))
     | .browser_download_url
   ' | head -n1)
 fi
 
-if [[ -z "$ASSET_URL" || "$ASSET_URL" == "null" ]]; then
-  echo "❌ Could not find quickshell package in release $TAG_NAME"
+# Find cpptrace asset
+CPPTRACE_URL=$(echo "$RELEASE_JSON" | jq -r '
+  .assets[]
+  | select(.name | test("^cpptrace-.*\\.pkg\\.tar\\.zst$"))
+  | .browser_download_url
+' | head -n1)
+
+if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
+  echo "❌ Could not find quickshell package"
   exit 1
 fi
 
-PKG_FILE=$(basename "$ASSET_URL")
+if [[ -z "$CPPTRACE_URL" || "$CPPTRACE_URL" == "null" ]]; then
+  echo "❌ Could not find cpptrace package"
+  exit 1
+fi
 
-LATEST_VERSION=$(echo "$PKG_FILE" | sed -E \
+QS_FILE=$(basename "$QUICKSHELL_URL")
+CPP_FILE=$(basename "$CPPTRACE_URL")
+
+LATEST_VERSION=$(echo "$QS_FILE" | sed -E \
   's/^quickshell-git-(.*)-x86_64(_v3)?\.pkg\.tar\.zst/\1/')
 
-echo "Latest package version: $LATEST_VERSION"
+echo "Latest quickshell version: $LATEST_VERSION"
 echo
 
 echo "Choose an action:"
@@ -80,13 +93,15 @@ fi
 TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 
-echo "📥 Downloading (8 connections with aria2)..."
-echo "   $PKG_FILE"
+echo "📥 Downloading packages..."
 
-aria2c -x 8 -s 8 -k 1M -o "$PKG_FILE" "$ASSET_URL"
+aria2c -x 8 -s 8 -k 1M -o "$CPP_FILE" "$CPPTRACE_URL"
+aria2c -x 8 -s 8 -k 1M -o "$QS_FILE" "$QUICKSHELL_URL"
 
-echo "📦 Installing package..."
-sudo pacman -U --noconfirm "$PKG_FILE"
+echo "📦 Installing packages..."
+
+sudo pacman -U --noconfirm "$CPP_FILE"
+sudo pacman -U --noconfirm "$QS_FILE"
 
 cd /
 rm -rf "$TMP_DIR"
