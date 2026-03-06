@@ -1,168 +1,185 @@
 name: Build quickshell-git (x86-64-v3)
 
 permissions:
-  contents: write
+contents: write
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */23 * * *"
+workflow_dispatch:
+schedule:
+- cron: "0 */23 * * *"
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
+build:
+runs-on: ubuntu-latest
+container:
+image: archlinux:latest
 
-    steps:
-      # -------------------------
-      # Update system
-      # -------------------------
-      - name: Update base system
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl sudo
+```
+steps:
+  # -------------------------
+  # Update base system
+  # -------------------------
+  - name: Update base system
+    run: |
+      pacman -Syu --noconfirm
+      pacman -S --noconfirm base-devel git curl sudo
 
-      # -------------------------
-      # Add CachyOS repo
-      # -------------------------
-      - name: Setup CachyOS repo
-        run: |
-          pacman-key --init
-          curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o cachyos-repo.tar.xz
-          tar -xf cachyos-repo.tar.xz
-          cd cachyos-repo
-          chmod +x cachyos-repo.sh
-          yes | ./cachyos-repo.sh
-          pacman -Syu --noconfirm
-           pacman -S --noconfirm paru
+  # -------------------------
+  # Setup pacman keys
+  # -------------------------
+  - name: Initialize pacman keys
+    run: |
+      pacman-key --init
+      pacman-key --populate archlinux
 
-      # -------------------------
-      # Install dependencies
-      # -------------------------
-      - name: Install dependencies
-        run: |
-          paru -S --noconfirm \
-            cmake ninja cli11 qt6-base qt6-declarative qt6-svg qt6-wayland qt6-shadertools spirv-tools wayland-protocols jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit cpptrace
+  # -------------------------
+  # Add CachyOS repo
+  # -------------------------
+  - name: Setup CachyOS repo
+    run: |
+      curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o cachyos-repo.tar.xz
+      tar -xf cachyos-repo.tar.xz
+      cd cachyos-repo
+      chmod +x cachyos-repo.sh
+      yes | ./cachyos-repo.sh
+      pacman -Syu --noconfirm
+      pacman -S --noconfirm paru
 
-      # -------------------------
-      # Create builder user
-      # -------------------------
-      - name: Create builder user
-        run: |
-          useradd -m builder
-          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+  # -------------------------
+  # Create builder user
+  # -------------------------
+  - name: Create builder user
+    run: |
+      useradd -m builder
+      echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-      # -------------------------
-      # Create PKGBUILD (x86-64-v3)
-      # -------------------------
-      - name: Create PKGBUILD
-        run: |
-          cat > /home/builder/PKGBUILD << 'EOF'
-          pkgname=quickshell-git
-          pkgver=0.0.0
-          pkgrel=1
-          pkgdesc='Flexible toolkit for making desktop shells with QtQuick (git, x86-64-v3)'
-          arch=(x86_64)
-          url="https://git.outfoxxed.me/quickshell/quickshell"
-          license=(LGPL-3.0-only)
+  # -------------------------
+  # Install repo dependencies
+  # -------------------------
+  - name: Install repo dependencies
+    run: |
+      pacman -S --noconfirm \
+        cmake ninja cli11 qt6-base qt6-declarative qt6-svg qt6-wayland \
+        qt6-shadertools spirv-tools wayland-protocols jemalloc libdrm \
+        libglvnd libpipewire libxcb mesa pam polkit git
 
-          depends=(
-            gcc-libs glibc hicolor-icon-theme jemalloc libdrm libglvnd
-            libpipewire libxcb mesa pam qt6-base qt6-declarative
-            qt6-svg qt6-wayland wayland
-          )
+  # -------------------------
+  # Install AUR dependencies
+  # -------------------------
+  - name: Install cpptrace (AUR)
+    run: |
+      chown -R builder:builder /home/builder
+      su builder -c "paru -S --noconfirm --needed cpptrace"
 
-          makedepends=(
-            cli11 cmake ninja qt6-shadertools spirv-tools
-            wayland-protocols git
-          )
+  # -------------------------
+  # Create PKGBUILD (x86-64-v3)
+  # -------------------------
+  - name: Create PKGBUILD
+    run: |
+      cat > /home/builder/PKGBUILD << 'EOF'
+      pkgname=quickshell-git
+      pkgver=0.0.0
+      pkgrel=1
+      pkgdesc='Flexible toolkit for making desktop shells with QtQuick (git, x86-64-v3)'
+      arch=(x86_64)
+      url="https://git.outfoxxed.me/quickshell/quickshell"
+      license=(LGPL-3.0-only)
 
-          provides=(quickshell)
-          conflicts=(quickshell)
+      depends=(
+        gcc-libs glibc hicolor-icon-theme jemalloc libdrm libglvnd
+        libpipewire libxcb mesa pam qt6-base qt6-declarative
+        qt6-svg qt6-wayland wayland
+      )
 
-          source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
-          sha256sums=('SKIP')
+      makedepends=(
+        cli11 cmake ninja qt6-shadertools spirv-tools
+        wayland-protocols git cpptrace
+      )
 
-          pkgver() {
-            cd quickshell
-            git describe --long --tags --abbrev=7 | sed 's/^v//;s/-/.r/;s/-/./'
-          }
+      provides=(quickshell)
+      conflicts=(quickshell)
 
-          build() {
-            cd quickshell
+      source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
+      sha256sums=('SKIP')
 
-            # x86-64-v3 optimization
-            export CFLAGS="-O2 -pipe -march=x86-64-v3 -mtune=generic"
-            export CXXFLAGS="-O2 -pipe -march=x86-64-v3 -mtune=generic"
+      pkgver() {
+        cd quickshell
+        git describe --long --tags --abbrev=7 | sed 's/^v//;s/-/.r/;s/-/./'
+      }
 
-            local cmake_options=(
-              -D CMAKE_BUILD_TYPE=Release
-              -D DISTRIBUTOR='Arch Linux (x86-64-v3)'
-              -D CRASH_REPORTER=Off
-              -D CMAKE_INSTALL_PREFIX=/usr
-              -D INSTALL_QML_PREFIX=lib/qt6/qml
-              -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
-              -D CMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=x86-64-v3"
-              -D CMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG -march=x86-64-v3"
-            )
+      build() {
+        cd quickshell
 
-            cmake -G Ninja -B build -W no-dev "${cmake_options[@]}"
-            cmake --build build
-          }
+        export CFLAGS="-O2 -pipe -march=x86-64-v3 -mtune=generic"
+        export CXXFLAGS="-O2 -pipe -march=x86-64-v3 -mtune=generic"
 
-          package() {
-            cd quickshell
-            DESTDIR="$pkgdir" cmake --install build
+        local cmake_options=(
+          -D CMAKE_BUILD_TYPE=Release
+          -D DISTRIBUTOR='Arch Linux (x86-64-v3)'
+          -D CRASH_REPORTER=Off
+          -D CMAKE_INSTALL_PREFIX=/usr
+          -D INSTALL_QML_PREFIX=lib/qt6/qml
+          -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
+          -D CMAKE_C_FLAGS_RELEASE="-O2 -DNDEBUG -march=x86-64-v3"
+          -D CMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG -march=x86-64-v3"
+        )
 
-            # Force strip
-            strip --strip-all "$pkgdir/usr/bin/quickshell" || true
+        cmake -G Ninja -B build -W no-dev "${cmake_options[@]}"
+        cmake --build build
+      }
 
-            install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-          }
-          EOF
+      package() {
+        cd quickshell
+        DESTDIR="$pkgdir" cmake --install build
 
-      # -------------------------
-      # Build package
-      # -------------------------
-      - name: Build quickshell-git
-        run: |
-          chown -R builder:builder /home/builder
-          su builder -c "cd ~ && makepkg -s --noconfirm"
+        strip --strip-all "$pkgdir/usr/bin/quickshell" || true
 
-      # -------------------------
-      # Prepare release
-      # -------------------------
-      - name: Prepare release
-        id: pkg
-        run: |
-          PKG_PATH=$(ls /home/builder/*.pkg.tar.zst)
-          PKG_FILE=$(basename "$PKG_PATH")
-          VERSION=$(echo "$PKG_FILE" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
-          NEW_NAME="quickshell-git-${VERSION}-x86_64_v3.pkg.tar.zst"
+        install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+      }
+      EOF
 
-          mkdir release
-          cp "$PKG_PATH" "release/$NEW_NAME"
+  # -------------------------
+  # Build package
+  # -------------------------
+  - name: Build quickshell-git
+    run: |
+      chown -R builder:builder /home/builder
+      su builder -c "cd ~ && makepkg -s --noconfirm"
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+  # -------------------------
+  # Prepare release
+  # -------------------------
+  - name: Prepare release
+    id: pkg
+    run: |
+      PKG_PATH=$(ls /home/builder/*.pkg.tar.zst)
+      PKG_FILE=$(basename "$PKG_PATH")
+      VERSION=$(echo "$PKG_FILE" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
+      NEW_NAME="quickshell-git-${VERSION}-x86_64_v3.pkg.tar.zst"
 
-      # -------------------------
-      # Upload artifact
-      # -------------------------
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: quickshell-git-${{ steps.pkg.outputs.version }}-x86_64_v3
-          path: release/*.pkg.tar.zst
+      mkdir release
+      cp "$PKG_PATH" "release/$NEW_NAME"
 
-      # -------------------------
-      # Create GitHub Release
-      # -------------------------
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.pkg.outputs.version }}-v3
-          name: quickshell-git ${{ steps.pkg.outputs.version }} (x86-64-v3)
-          files: release/*.pkg.tar.zst
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  # -------------------------
+  # Upload artifact
+  # -------------------------
+  - name: Upload artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: quickshell-git-${{ steps.pkg.outputs.version }}-x86_64_v3
+      path: release/*.pkg.tar.zst
+
+  # -------------------------
+  # Create GitHub Release
+  # -------------------------
+  - name: Create GitHub Release
+    uses: softprops/action-gh-release@v2
+    with:
+      tag_name: ${{ steps.pkg.outputs.version }}-v3
+      name: quickshell-git ${{ steps.pkg.outputs.version }} (x86-64-v3)
+      files: release/*.pkg.tar.zst
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
