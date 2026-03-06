@@ -35,16 +35,15 @@ jobs:
           chmod +x cachyos-repo.sh
           yes | ./cachyos-repo.sh
           pacman -Syu --noconfirm
+           pacman -S --noconfirm paru
 
       # -------------------------
       # Install dependencies
       # -------------------------
       - name: Install dependencies
         run: |
-          pacman -S --noconfirm \
-            cmake ninja cli11 qt6-base qt6-declarative qt6-svg \
-            qt6-wayland qt6-shadertools spirv-tools wayland-protocols \
-            jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit
+          paru -S --noconfirm \
+            cmake ninja cli11 qt6-base qt6-declarative qt6-svg qt6-wayland qt6-shadertools spirv-tools wayland-protocols jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit cpptrace
 
       # -------------------------
       # Create builder user
