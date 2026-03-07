@@ -68,7 +68,7 @@ jobs:
           url="https://git.outfoxxed.me/quickshell/quickshell"
           license=(LGPL-3.0-only)
 
-          provides=(quickshell)
+          provides=(quickshell quickshell-git)
           conflicts=(quickshell)
           replaces=(quickshell)
 
@@ -107,11 +107,14 @@ jobs:
 
           pkgver() {
             cd quickshell
-            git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+            git describe --long --tags --abbrev=7 2>/dev/null \
+              | sed 's/^v//;s/-/.r/;s/-/./' \
+              || printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
           }
 
           build() {
             cd quickshell
+
             export CFLAGS="-O2 -pipe -march=x86-64-v3"
             export CXXFLAGS="-O2 -pipe -march=x86-64-v3"
 
@@ -132,7 +135,11 @@ jobs:
       - name: Build quickshell package
         run: |
           chown -R builder:builder /home/builder
-          su builder -c "cd ~ && makepkg -s --noconfirm"
+          su builder -c "
+            export PACKAGER='Ravi Kishor <github@ravi>'
+            export DISTRIBUTOR='Ravi Kishor'
+            cd ~ && makepkg -s --noconfirm
+          "
 
       - name: Prepare release files
         id: pkg
