@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
+
     steps:
       - name: Update system
         run: |
@@ -66,6 +67,10 @@ jobs:
           arch=(x86_64)
           url="https://git.outfoxxed.me/quickshell/quickshell"
           license=(LGPL-3.0-only)
+
+          provides=(quickshell)
+          conflicts=(quickshell)
+          replaces=(quickshell)
 
           depends=(
             cpptrace
