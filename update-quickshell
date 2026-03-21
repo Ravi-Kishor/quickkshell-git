@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- CONFIGURATION ---
 REPO="Ravi-Kishor/quickshell-git"
 PKG_NAME="quickshell-git"
 
@@ -11,100 +12,115 @@ require() {
   }
 }
 
-require aria2c
-require curl
-require jq
-require sudo
-require pacman
+# Added vercmp to requirements
+for cmd in aria2c curl jq sudo pacman vercmp sed awk; do
+  require "$cmd"
+done
 
 get_installed_version() {
-  pacman -Q "$PKG_NAME" 2>/dev/null | awk '{print $2}' || echo "Not Installed"
+  pacman -Q "$PKG_NAME" 2>/dev/null | awk '{print $2}' || echo ""
 }
 
 INSTALLED_VERSION=$(get_installed_version)
 
-echo "Installed package version: $INSTALLED_VERSION"
-echo "📡 Fetching latest release metadata…"
+echo "------------------------------------------"
+echo "  Quickshell Zen 3 (LTO) Installer"
+echo "------------------------------------------"
+echo "Local:   ${INSTALLED_VERSION:-Not Installed}"
+echo "📡 Fetching latest release metadata..."
 
 RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
 
-TAG_NAME=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-echo "Latest release tag: $TAG_NAME"
-
-# Find quickshell asset (prefer v3)
+# --- ASSET DISCOVERY ---
+# 1. Find quickshell (Checks for znver3 first, then x86_64)
 QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
-  .assets[]
-  | select(.name | test("^quickshell-git-.*-x86_64_v3\\.pkg\\.tar\\.zst$"))
+  .assets[] 
+  | select(.name | test("quickshell-git-.*-znver3\\.pkg\\.tar\\.zst$")) 
   | .browser_download_url
 ' | head -n1)
 
 if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
   QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
-    .assets[]
-    | select(.name | test("^quickshell-git-.*-x86_64\\.pkg\\.tar\\.zst$"))
+    .assets[] 
+    | select(.name | test("quickshell-git-.*-x86_64\\.pkg\\.tar\\.zst$")) 
     | .browser_download_url
   ' | head -n1)
 fi
 
-# Find cpptrace asset
+# 2. Find cpptrace asset
 CPPTRACE_URL=$(echo "$RELEASE_JSON" | jq -r '
-  .assets[]
-  | select(.name | test("^cpptrace-.*\\.pkg\\.tar\\.zst$"))
+  .assets[] 
+  | select(.name | test("^cpptrace-.*\\.pkg\\.tar\\.zst$")) 
   | .browser_download_url
 ' | head -n1)
 
+# Validation
 if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
-  echo "❌ Could not find quickshell package"
+  echo "❌ Error: Could not find quickshell package in latest release."
   exit 1
 fi
-
 if [[ -z "$CPPTRACE_URL" || "$CPPTRACE_URL" == "null" ]]; then
-  echo "❌ Could not find cpptrace package"
+  echo "❌ Error: Could not find cpptrace dependency."
   exit 1
 fi
 
 QS_FILE=$(basename "$QUICKSHELL_URL")
 CPP_FILE=$(basename "$CPPTRACE_URL")
 
-LATEST_VERSION=$(echo "$QS_FILE" | sed -E \
-  's/^quickshell-git-(.*)-x86_64(_v3)?\.pkg\.tar\.zst/\1/')
+# Extract version (Handles -znver3 or -x86_64 suffixes)
+LATEST_VERSION=$(echo "$QS_FILE" | sed -E 's/^quickshell-git-(.*)-(znver3|x86_64)\.pkg\.tar\.zst/\1/')
 
-echo "Latest quickshell version: $LATEST_VERSION"
-echo
+echo "Remote:  $LATEST_VERSION"
+echo "------------------------------------------"
 
-echo "Choose an action:"
-echo "1) Update (skip if already latest)"
-echo "2) Force install"
-read -rp "Enter choice (1/2): " CHOICE
-
-if [[ "$CHOICE" == "1" ]]; then
-  if [[ "$INSTALLED_VERSION" == "$LATEST_VERSION" ]]; then
-    echo "✅ quickshell is already up to date"
-    exit 0
+# --- VERSION COMPARISON ---
+UP_TO_DATE=false
+if [[ -n "$INSTALLED_VERSION" ]]; then
+  if [[ "$(vercmp "$INSTALLED_VERSION" "$LATEST_VERSION")" -ge 0 ]]; then
+    UP_TO_DATE=true
   fi
-  echo "⬆️ Updating quickshell $INSTALLED_VERSION → $LATEST_VERSION"
-elif [[ "$CHOICE" == "2" ]]; then
-  echo "🛠️ Force installing quickshell $LATEST_VERSION"
-else
-  echo "❌ Invalid choice"
-  exit 1
 fi
 
+# --- USER SELECTION ---
+echo "Choose an action:"
+if [[ "$UP_TO_DATE" == "true" ]]; then
+  echo "1) Update (Already latest: $INSTALLED_VERSION)"
+else
+  echo "1) Update to $LATEST_VERSION"
+fi
+echo "2) Force reinstall"
+echo "3) Cancel"
+read -rp "Enter choice (1/2/3): " CHOICE
+
+case "$CHOICE" in
+  1) 
+    if [[ "$UP_TO_DATE" == "true" ]]; then
+      echo "✅ Already up to date."
+      exit 0
+    fi
+    ;;
+  2) 
+    echo "🛠️ Force reinstalling..." 
+    ;;
+  *) 
+    echo "Cancelled."; exit 0 
+    ;;
+esac
+
+# --- DOWNLOAD & INSTALL ---
 TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 cd "$TMP_DIR"
 
 echo "📥 Downloading packages..."
+# Speed up download with 12 connections
+aria2c -x 12 -s 12 -k 1M -o "$CPP_FILE" "$CPPTRACE_URL"
+aria2c -x 12 -s 12 -k 1M -o "$QS_FILE" "$QUICKSHELL_URL"
 
-aria2c -x 8 -s 8 -k 1M -o "$CPP_FILE" "$CPPTRACE_URL"
-aria2c -x 8 -s 8 -k 1M -o "$QS_FILE" "$QUICKSHELL_URL"
+echo "📦 Installing..."
+# Install both at once to satisfy dependencies
+sudo pacman -U --noconfirm "$CPP_FILE" "$QS_FILE"
 
-echo "📦 Installing packages..."
-
-sudo pacman -U --noconfirm "$CPP_FILE"
-sudo pacman -U --noconfirm "$QS_FILE"
-
-cd /
-rm -rf "$TMP_DIR"
-
-echo
-echo "✅ quickshell $LATEST_VERSION installed successfully!"
+echo "------------------------------------------"
+echo "✅ Quickshell $LATEST_VERSION installed successfully!"
+echo "------------------------------------------"
