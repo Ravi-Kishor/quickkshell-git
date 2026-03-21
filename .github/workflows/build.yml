@@ -130,13 +130,21 @@ jobs:
         id: pkg
         run: |
           mkdir -p release
-          # Extract version and rename package to reflect optimization
-          PKG_PATH=$(ls /home/builder/quickshell-git-*.pkg.tar.zst | head -n1)
-          VERSION=$(basename "$PKG_PATH" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
           
-          NEW_NAME="quickshell-git-${VERSION}-znver3.pkg.tar.zst"
-          cp "$PKG_PATH" "release/$NEW_NAME"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # 1. Find and copy cpptrace (any architecture)
+          CPP_PATH=$(find /home/builder/cpptrace -name "cpptrace-*.pkg.tar.zst" | head -n1)
+          if [ -f "$CPP_PATH" ]; then
+            cp "$CPP_PATH" release/
+          fi
+
+          # 2. Find, rename, and copy quickshell
+          QS_PATH=$(find /home/builder -maxdepth 1 -name "quickshell-git-*-x86_64.pkg.tar.zst" | head -n1)
+          if [ -f "$QS_PATH" ]; then
+            VERSION=$(basename "$QS_PATH" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
+            NEW_NAME="quickshell-git-${VERSION}-znver3.pkg.tar.zst"
+            cp "$QS_PATH" "release/$NEW_NAME"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
