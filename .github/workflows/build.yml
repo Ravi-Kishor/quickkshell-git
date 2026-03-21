@@ -1,4 +1,4 @@
-name: Build quickshell-git (x86-64-v3)
+name: Build quickshell-git (Zen 3 Optimized)
 
 permissions:
   contents: write
@@ -15,13 +15,10 @@ jobs:
       image: archlinux:latest
 
     steps:
-      - name: Update system
+      - name: Update system & Setup CachyOS
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git curl sudo
-
-      - name: Setup CachyOS repo
-        run: |
           pacman-key --init
           curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o repo.tar.xz
           tar -xf repo.tar.xz
@@ -29,6 +26,8 @@ jobs:
           chmod +x cachyos-repo.sh
           yes | ./cachyos-repo.sh
           pacman -Syu --noconfirm
+          # Install mold for lightning fast linking
+          pacman -S --noconfirm mold
 
       - name: Install dependencies
         run: |
@@ -42,18 +41,21 @@ jobs:
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder /home/builder
 
       - name: Build cpptrace (AUR)
         run: |
-          chown -R builder:builder /home/builder
           su builder -c "
             cd ~ &&
             git clone https://aur.archlinux.org/cpptrace.git &&
             cd cpptrace &&
+            # Optimization for the dependency too
+            export CFLAGS='-O3 -march=znver3 -pipe'
+            export CXXFLAGS='-O3 -march=znver3 -pipe'
             makepkg -s --noconfirm
           "
 
-      - name: Install cpptrace for build environment
+      - name: Install cpptrace
         run: |
           pacman -U --noconfirm /home/builder/cpptrace/*.pkg.tar.zst
 
@@ -63,65 +65,48 @@ jobs:
           pkgname=quickshell-git
           pkgver=0.0.0
           pkgrel=1
-          pkgdesc="Flexible toolkit for making desktop shells with QtQuick"
+          pkgdesc="Flexible toolkit for making desktop shells (Zen 3 + LTO)"
           arch=(x86_64)
           url="https://git.outfoxxed.me/quickshell/quickshell"
           license=(LGPL-3.0-only)
 
+          depends=(cpptrace gcc-libs glibc hicolor-icon-theme jemalloc libdrm 
+                   libglvnd libpipewire libxcb mesa pam qt6-base qt6-declarative 
+                   qt6-svg qt6-wayland wayland)
+
+          makedepends=(cli11 cmake ninja qt6-shadertools spirv-tools 
+                       wayland-protocols git vulkan-headers mold)
+
           provides=(quickshell quickshell-git)
           conflicts=(quickshell)
-          replaces=(quickshell)
-
-          depends=(
-            cpptrace
-            gcc-libs
-            glibc
-            hicolor-icon-theme
-            jemalloc
-            libdrm
-            libglvnd
-            libpipewire
-            libxcb
-            mesa
-            pam
-            qt6-base
-            qt6-declarative
-            qt6-svg
-            qt6-wayland
-            wayland
-          )
-
-          makedepends=(
-            cli11
-            cmake
-            ninja
-            qt6-shadertools
-            spirv-tools
-            wayland-protocols
-            git
-            vulkan-headers
-          )
+          options=(!debug !lto) # We handle LTO manually in CMake for better control
 
           source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
           sha256sums=('SKIP')
 
           pkgver() {
             cd quickshell
-            git describe --long --tags --abbrev=7 2>/dev/null \
-              | sed 's/^v//;s/-/.r/;s/-/./' \
-              || printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+            git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || \
+            printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
           }
 
           build() {
             cd quickshell
 
-            export CFLAGS="-O2 -pipe -march=x86-64-v3"
-            export CXXFLAGS="-O2 -pipe -march=x86-64-v3"
+            # --- HARDWARE TUNE ---
+            # -O3: Stronger optimizations than standard -O2
+            # -flto=thin: Faster/smarter Link Time Optimization
+            # -fuse-ld=mold: Use the mold linker for speed/efficiency
+            export CFLAGS="-O3 -march=znver3 -flto=thin -pipe"
+            export CXXFLAGS="-O3 -march=znver3 -flto=thin -pipe"
+            export LDFLAGS="-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now -fuse-ld=mold"
 
             cmake -B build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr \
-              -DINSTALL_QML_PREFIX=lib/qt6/qml
+              -DINSTALL_QML_PREFIX=lib/qt6/qml \
+              -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+              -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"
 
             cmake --build build
           }
@@ -129,15 +114,16 @@ jobs:
           package() {
             cd quickshell
             DESTDIR="$pkgdir" cmake --install build
+            # Strip binaries manually to ensure minimum size
+            find "$pkgdir/usr/bin" -type f -exec strip --strip-all {} +
           }
           EOF
+          chown builder:builder /home/builder/PKGBUILD
 
       - name: Build quickshell package
         run: |
-          chown -R builder:builder /home/builder
           su builder -c "
-            export PACKAGER='Ravi Kishor <github@ravi>'
-            export DISTRIBUTOR='Ravi Kishor'
+            export MAKEFLAGS='-j$(nproc)'
             cd ~ && makepkg -s --noconfirm
           "
 
@@ -145,23 +131,22 @@ jobs:
         id: pkg
         run: |
           mkdir release
-          cp /home/builder/cpptrace/*.pkg.tar.zst release/
           cp /home/builder/quickshell-git-*.pkg.tar.zst release/
-
-          VERSION=$(basename $(ls /home/builder/quickshell-git-*.pkg.tar.zst) | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
+          
+          # Extract version for the release tag
+          PKG_NAME=$(ls /home/builder/quickshell-git-*.pkg.tar.zst | head -n1)
+          VERSION=$(basename "$PKG_NAME" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
+          
+          # Rename for clarity
+          NEW_NAME="quickshell-git-${VERSION}-znver3.pkg.tar.zst"
+          mv "$PKG_NAME" "release/$NEW_NAME"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: quickshell-release
-          path: release/*.pkg.tar.zst
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.pkg.outputs.version }}-v3
-          name: quickshell-git ${{ steps.pkg.outputs.version }} (x86-64-v3)
+          tag_name: ${{ steps.pkg.outputs.version }}-znver3
+          name: quickshell-git ${{ steps.pkg.outputs.version }} (Zen 3 Optimized)
           files: release/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
