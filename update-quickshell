@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-# --- CONFIGURATION ---
 REPO="Ravi-Kishor/quickshell-git"
 PKG_NAME="quickshell-git"
 
@@ -12,7 +11,6 @@ require() {
   }
 }
 
-# Added vercmp to requirements
 for cmd in aria2c curl jq sudo pacman vercmp sed awk; do
   require "$cmd"
 done
@@ -24,56 +22,41 @@ get_installed_version() {
 INSTALLED_VERSION=$(get_installed_version)
 
 echo "------------------------------------------"
-echo "  Quickshell Zen 3 (LTO) Installer"
+echo "  Quickshell Installer (Zen3 build)"
 echo "------------------------------------------"
 echo "Local:   ${INSTALLED_VERSION:-Not Installed}"
-echo "📡 Fetching latest release metadata..."
+echo "📡 Fetching latest release..."
 
 RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
 
-# --- ASSET DISCOVERY ---
-# 1. Find quickshell (Checks for znver3 first, then x86_64)
+# --- Find quickshell package ---
 QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
-  .assets[] 
-  | select(.name | test("quickshell-git-.*-znver3\\.pkg\\.tar\\.zst$")) 
+  .assets[]
+  | select(.name | test("^quickshell-git-.*-x86_64\\.pkg\\.tar\\.zst$"))
   | .browser_download_url
 ' | head -n1)
 
-if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
-  QUICKSHELL_URL=$(echo "$RELEASE_JSON" | jq -r '
-    .assets[] 
-    | select(.name | test("quickshell-git-.*-x86_64\\.pkg\\.tar\\.zst$")) 
-    | .browser_download_url
-  ' | head -n1)
-fi
-
-# 2. Find cpptrace asset
+# --- Find cpptrace (optional) ---
 CPPTRACE_URL=$(echo "$RELEASE_JSON" | jq -r '
-  .assets[] 
-  | select(.name | test("^cpptrace-.*\\.pkg\\.tar\\.zst$")) 
+  .assets[]
+  | select(.name | test("^cpptrace-.*\\.pkg\\.tar\\.zst$"))
   | .browser_download_url
 ' | head -n1)
 
-# Validation
 if [[ -z "$QUICKSHELL_URL" || "$QUICKSHELL_URL" == "null" ]]; then
-  echo "❌ Error: Could not find quickshell package in latest release."
-  exit 1
-fi
-if [[ -z "$CPPTRACE_URL" || "$CPPTRACE_URL" == "null" ]]; then
-  echo "❌ Error: Could not find cpptrace dependency."
+  echo "❌ Could not find quickshell package."
   exit 1
 fi
 
 QS_FILE=$(basename "$QUICKSHELL_URL")
-CPP_FILE=$(basename "$CPPTRACE_URL")
 
-# Extract version (Handles -znver3 or -x86_64 suffixes)
-LATEST_VERSION=$(echo "$QS_FILE" | sed -E 's/^quickshell-git-(.*)-(znver3|x86_64)\.pkg\.tar\.zst/\1/')
+# Extract version cleanly
+LATEST_VERSION=$(echo "$QS_FILE" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
 
 echo "Remote:  $LATEST_VERSION"
 echo "------------------------------------------"
 
-# --- VERSION COMPARISON ---
+# --- Version check ---
 UP_TO_DATE=false
 if [[ -n "$INSTALLED_VERSION" ]]; then
   if [[ "$(vercmp "$INSTALLED_VERSION" "$LATEST_VERSION")" -ge 0 ]]; then
@@ -81,7 +64,6 @@ if [[ -n "$INSTALLED_VERSION" ]]; then
   fi
 fi
 
-# --- USER SELECTION ---
 echo "Choose an action:"
 if [[ "$UP_TO_DATE" == "true" ]]; then
   echo "1) Update (Already latest: $INSTALLED_VERSION)"
@@ -93,34 +75,41 @@ echo "3) Cancel"
 read -rp "Enter choice (1/2/3): " CHOICE
 
 case "$CHOICE" in
-  1) 
+  1)
     if [[ "$UP_TO_DATE" == "true" ]]; then
       echo "✅ Already up to date."
       exit 0
     fi
     ;;
-  2) 
-    echo "🛠️ Force reinstalling..." 
+  2)
+    echo "🛠️ Force reinstalling..."
     ;;
-  *) 
-    echo "Cancelled."; exit 0 
+  *)
+    echo "Cancelled."
+    exit 0
     ;;
 esac
 
-# --- DOWNLOAD & INSTALL ---
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 cd "$TMP_DIR"
 
-echo "📥 Downloading packages..."
-# Speed up download with 12 connections
-aria2c -x 12 -s 12 -k 1M -o "$CPP_FILE" "$CPPTRACE_URL"
+echo "📥 Downloading..."
+
 aria2c -x 12 -s 12 -k 1M -o "$QS_FILE" "$QUICKSHELL_URL"
 
+INSTALL_FILES=("$QS_FILE")
+
+# Install cpptrace only if present
+if [[ -n "$CPPTRACE_URL" && "$CPPTRACE_URL" != "null" ]]; then
+  CPP_FILE=$(basename "$CPPTRACE_URL")
+  aria2c -x 12 -s 12 -k 1M -o "$CPP_FILE" "$CPPTRACE_URL"
+  INSTALL_FILES=("$CPP_FILE" "$QS_FILE")
+fi
+
 echo "📦 Installing..."
-# Install both at once to satisfy dependencies
-sudo pacman -U --noconfirm "$CPP_FILE" "$QS_FILE"
+sudo pacman -U --noconfirm "${INSTALL_FILES[@]}"
 
 echo "------------------------------------------"
-echo "✅ Quickshell $LATEST_VERSION installed successfully!"
+echo "✅ Quickshell $LATEST_VERSION installed!"
 echo "------------------------------------------"
