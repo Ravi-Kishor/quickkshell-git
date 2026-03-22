@@ -1,4 +1,4 @@
-name: Build quickshell
+name: Build quickshell-git (Zen3 Optimized)
 
 permissions:
   contents: write
@@ -6,7 +6,7 @@ permissions:
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */23 * * *"
+    - cron: "0 */12 * * *"
 
 jobs:
   build:
@@ -15,20 +15,23 @@ jobs:
       image: archlinux:latest
 
     steps:
-      - name: Update system
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl sudo
-
-      - name: Setup CachyOS repo
+      - name: Init system
         run: |
           pacman-key --init
-          curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o repo.tar.xz
-          tar -xf repo.tar.xz
-          cd cachyos-repo
-          chmod +x cachyos-repo.sh
-          yes | ./cachyos-repo.sh
           pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git sudo clang lld
+
+      - name: Enforce Zen3 + LTO globally
+        run: |
+          sed -i 's/-march=x86-64/-march=znver3 -mtune=znver3/g' /etc/makepkg.conf
+          sed -i 's/-O2/-O2 -pipe -fomit-frame-pointer -fno-plt/g' /etc/makepkg.conf
+          sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' /etc/makepkg.conf
+          sed -i 's/^#LTOFLAGS=.*/LTOFLAGS="-flto=auto"/' /etc/makepkg.conf
+
+          # switch to clang
+          sed -i 's/^CC=.*/CC=clang/' /etc/makepkg.conf
+          sed -i 's/^CXX=.*/CXX=clang++/' /etc/makepkg.conf
+          sed -i 's/^#RUSTFLAGS=.*/RUSTFLAGS="-C target-cpu=znver3"/' /etc/makepkg.conf
 
       - name: Install dependencies
         run: |
@@ -36,7 +39,7 @@ jobs:
             cmake ninja cli11 qt6-base qt6-declarative qt6-svg \
             qt6-wayland qt6-shadertools spirv-tools wayland-protocols \
             jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit \
-            vulkan-headers vulkan-icd-loader
+            vulkan-headers
 
       - name: Create builder user
         run: |
@@ -50,14 +53,14 @@ jobs:
             cd ~ &&
             git clone https://aur.archlinux.org/cpptrace.git &&
             cd cpptrace &&
-            makepkg -s --noconfirm
+            makepkg -s --noconfirm --needed
           "
 
-      - name: Install cpptrace for build environment
+      - name: Install cpptrace
         run: |
           pacman -U --noconfirm /home/builder/cpptrace/*.pkg.tar.zst
 
-      - name: Create quickshell PKGBUILD
+      - name: Create PKGBUILD
         run: |
           cat << 'EOF' > /home/builder/PKGBUILD
           pkgname=quickshell-git
@@ -70,36 +73,16 @@ jobs:
 
           provides=(quickshell quickshell-git)
           conflicts=(quickshell)
-          replaces=(quickshell)
 
           depends=(
-            cpptrace
-            gcc-libs
-            glibc
-            hicolor-icon-theme
-            jemalloc
-            libdrm
-            libglvnd
-            libpipewire
-            libxcb
-            mesa
-            pam
-            qt6-base
-            qt6-declarative
-            qt6-svg
-            qt6-wayland
-            wayland
+            cpptrace gcc-libs glibc hicolor-icon-theme jemalloc
+            libdrm libglvnd libpipewire libxcb mesa pam
+            qt6-base qt6-declarative qt6-svg qt6-wayland wayland
           )
 
           makedepends=(
-            cli11
-            cmake
-            ninja
-            qt6-shadertools
-            spirv-tools
-            wayland-protocols
-            git
-            vulkan-headers
+            cli11 cmake ninja qt6-shadertools spirv-tools
+            wayland-protocols git vulkan-headers
           )
 
           source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
@@ -115,15 +98,22 @@ jobs:
           build() {
             cd quickshell
 
-            export CFLAGS="-O2 -pipe -march=x86-64-v3"
-            export CXXFLAGS="-O2 -pipe -march=x86-64-v3"
+            export CFLAGS="-O2 -march=znver3 -mtune=znver3 -pipe -fomit-frame-pointer -fno-plt"
+            export CXXFLAGS="$CFLAGS"
+            export LDFLAGS="-Wl,-O1,--as-needed"
+            export CC=clang
+            export CXX=clang++
 
             cmake -B build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER=clang \
+              -DCMAKE_CXX_COMPILER=clang++ \
+              -DCMAKE_C_FLAGS="$CFLAGS" \
+              -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
               -DCMAKE_INSTALL_PREFIX=/usr \
               -DINSTALL_QML_PREFIX=lib/qt6/qml
 
-            cmake --build build
+            cmake --build build -j$(nproc)
           }
 
           package() {
@@ -132,16 +122,15 @@ jobs:
           }
           EOF
 
-      - name: Build quickshell package
+      - name: Build package
         run: |
           chown -R builder:builder /home/builder
           su builder -c "
             export PACKAGER='Ravi Kishor <github@ravi>'
-            export DISTRIBUTOR='Ravi Kishor'
-            cd ~ && makepkg -s --noconfirm
+            cd ~ && makepkg -s --noconfirm --needed
           "
 
-      - name: Prepare release files
+      - name: Prepare release
         id: pkg
         run: |
           mkdir release
@@ -154,14 +143,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quickshell-release
+          name: quickshell-zen3
           path: release/*.pkg.tar.zst
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.pkg.outputs.version }}-v3
-          name: quickshell-git ${{ steps.pkg.outputs.version }} (x86-64-v3)
+          tag_name: ${{ steps.pkg.outputs.version }}-zen3
+          name: quickshell-git ${{ steps.pkg.outputs.version }} (Zen3 Optimized)
           files: release/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
