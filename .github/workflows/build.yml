@@ -1,156 +1,158 @@
-name: Build quickshell-git (Zen 3 Optimized)
+name: Build quickshell-git (Zen 3 Safe Optimized)
 
 permissions:
-  contents: write
+contents: write
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */23 * * *"
+workflow_dispatch:
+schedule:
+- cron: "0 */23 * * *"
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
+build:
+runs-on: ubuntu-latest
+container:
+image: archlinux:latest
 
-    steps:
-      - name: Update system & Setup CachyOS
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl sudo
-          pacman-key --init
-          curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o repo.tar.xz
-          tar -xf repo.tar.xz
-          cd cachyos-repo
-          chmod +x cachyos-repo.sh
-          yes | ./cachyos-repo.sh
-          pacman -Syu --noconfirm
-          # Install mold for high-speed linking
-          pacman -S --noconfirm mold
+```
+steps:
+  - name: Update system & Setup CachyOS
+    run: |
+      pacman -Syu --noconfirm
+      pacman -S --noconfirm base-devel git curl sudo
+      pacman-key --init
+      curl -L https://mirror.cachyos.org/cachyos-repo.tar.xz -o repo.tar.xz
+      tar -xf repo.tar.xz
+      cd cachyos-repo
+      chmod +x cachyos-repo.sh
+      yes | ./cachyos-repo.sh
+      pacman -Syu --noconfirm
 
-      - name: Install dependencies
-        run: |
-          pacman -S --noconfirm \
-            cmake ninja cli11 qt6-base qt6-declarative qt6-svg \
-            qt6-wayland qt6-shadertools spirv-tools wayland-protocols \
-            jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit \
-            vulkan-headers vulkan-icd-loader
+      # Install mold (safe without LTO)
+      pacman -S --noconfirm mold
 
-      - name: Create builder user
-        run: |
-          useradd -m builder
-          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          chown -R builder:builder /home/builder
+  - name: Install dependencies
+    run: |
+      pacman -S --noconfirm \
+        cmake ninja cli11 qt6-base qt6-declarative qt6-svg \
+        qt6-wayland qt6-shadertools spirv-tools wayland-protocols \
+        jemalloc libdrm libglvnd libpipewire libxcb mesa pam polkit \
+        vulkan-headers vulkan-icd-loader
 
-      - name: Build cpptrace (AUR)
-        run: |
-          su builder -c "
-            cd ~ &&
-            git clone https://aur.archlinux.org/cpptrace.git &&
-            cd cpptrace &&
-            export CFLAGS='-O3 -march=znver3 -pipe'
-            export CXXFLAGS='-O3 -march=znver3 -pipe'
-            makepkg -s --noconfirm
-          "
+  - name: Create builder user
+    run: |
+      useradd -m builder
+      echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+      chown -R builder:builder /home/builder
 
-      - name: Install cpptrace
-        run: |
-          pacman -U --noconfirm /home/builder/cpptrace/*.pkg.tar.zst
+  - name: Build cpptrace (AUR)
+    run: |
+      su builder -c "
+        cd ~ &&
+        git clone https://aur.archlinux.org/cpptrace.git &&
+        cd cpptrace &&
+        export CFLAGS='-O2 -march=znver3 -pipe'
+        export CXXFLAGS='-O2 -march=znver3 -pipe'
+        makepkg -s --noconfirm
+      "
 
-      - name: Create quickshell PKGBUILD
-        run: |
-          cat << 'EOF' > /home/builder/PKGBUILD
-          pkgname=quickshell-git
-          pkgver=0.0.0
-          pkgrel=1
-          pkgdesc="Flexible toolkit for making desktop shells (Zen 3 + LTO)"
-          arch=(x86_64)
-          url="https://git.outfoxxed.me/quickshell/quickshell"
-          license=(LGPL-3.0-only)
+  - name: Install cpptrace
+    run: |
+      pacman -U --noconfirm /home/builder/cpptrace/*.pkg.tar.zst
 
-          depends=(cpptrace gcc-libs glibc hicolor-icon-theme jemalloc libdrm 
-                   libglvnd libpipewire libxcb mesa pam qt6-base qt6-declarative 
-                   qt6-svg qt6-wayland wayland)
+  - name: Create quickshell PKGBUILD
+    run: |
+      cat << 'EOF' > /home/builder/PKGBUILD
+      pkgname=quickshell-git
+      pkgver=0.0.0
+      pkgrel=1
+      pkgdesc="Flexible toolkit for making desktop shells (Zen 3 safe optimized)"
+      arch=(x86_64)
+      url="https://git.outfoxxed.me/quickshell/quickshell"
+      license=(LGPL-3.0-only)
 
-          makedepends=(cli11 cmake ninja qt6-shadertools spirv-tools 
-                       wayland-protocols git vulkan-headers mold)
+      depends=(cpptrace gcc-libs glibc hicolor-icon-theme jemalloc libdrm 
+               libglvnd libpipewire libxcb mesa pam qt6-base qt6-declarative 
+               qt6-svg qt6-wayland wayland)
 
-          provides=(quickshell quickshell-git)
-          conflicts=(quickshell)
-          replaces=(quickshell)
-          options=(!debug !lto)
+      makedepends=(cli11 cmake ninja qt6-shadertools spirv-tools 
+                   wayland-protocols git vulkan-headers mold)
 
-          source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
-          sha256sums=('SKIP')
+      provides=(quickshell quickshell-git)
+      conflicts=(quickshell)
+      replaces=(quickshell)
 
-          pkgver() {
-            cd quickshell
-            git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || \
-            printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
-          }
+      options=(!debug)
 
-          build() {
-            cd quickshell
+      source=("git+https://git.outfoxxed.me/quickshell/quickshell.git")
+      sha256sums=('SKIP')
 
-            # --- PERFORMANCE TUNING ---
-            # Using -flto (GCC compatible) instead of -flto=thin (Clang only)
-            export CFLAGS="-O3 -march=znver3 -flto -fno-plt -pipe"
-            export CXXFLAGS="-O3 -march=znver3 -flto -fno-plt -pipe"
-            export LDFLAGS="-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now -flto -fuse-ld=mold"
+      pkgver() {
+        cd quickshell
+        git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || \
+        printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+      }
 
-            cmake -B build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_INSTALL_PREFIX=/usr \
-              -DINSTALL_QML_PREFIX=lib/qt6/qml \
-              -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-              -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
-              -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold"
+      build() {
+        cd quickshell
 
-            cmake --build build
-          }
+        # SAFE optimization (no LTO, no UB)
+        export CFLAGS="-O2 -march=znver3 -pipe"
+        export CXXFLAGS="-O2 -march=znver3 -pipe"
+        export LDFLAGS="-Wl,-O1,--as-needed"
 
-          package() {
-            cd quickshell
-            DESTDIR="$pkgdir" cmake --install build
-            # Strip for minimum size
-            find "$pkgdir/usr/bin" -type f -exec strip --strip-all {} +
-          }
-          EOF
-          chown builder:builder /home/builder/PKGBUILD
+        cmake -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr \
+          -DINSTALL_QML_PREFIX=lib/qt6/qml \
+          -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold"
 
-      - name: Build quickshell package
-        run: |
-          su builder -c "
-            export MAKEFLAGS='-j$(nproc)'
-            cd ~ && makepkg -s --noconfirm
-          "
+        cmake --build build
+      }
 
-      - name: Prepare release files
-        id: pkg
-        run: |
-          mkdir -p release
-          
-          # 1. Find and copy cpptrace (any architecture)
-          CPP_PATH=$(find /home/builder/cpptrace -name "cpptrace-*.pkg.tar.zst" | head -n1)
-          if [ -f "$CPP_PATH" ]; then
-            cp "$CPP_PATH" release/
-          fi
+      package() {
+        cd quickshell
+        DESTDIR="$pkgdir" cmake --install build
 
-          # 2. Find, rename, and copy quickshell
-          QS_PATH=$(find /home/builder -maxdepth 1 -name "quickshell-git-*-x86_64.pkg.tar.zst" | head -n1)
-          if [ -f "$QS_PATH" ]; then
-            VERSION=$(basename "$QS_PATH" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
-            NEW_NAME="quickshell-git-${VERSION}-znver3.pkg.tar.zst"
-            cp "$QS_PATH" "release/$NEW_NAME"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
+        # Safe strip
+        find "$pkgdir/usr/bin" -type f -exec strip --strip-unneeded {} +
+      }
+      EOF
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.pkg.outputs.version }}-znver3
-          name: quickshell-git ${{ steps.pkg.outputs.version }} (Zen 3 Optimized)
-          files: release/*.pkg.tar.zst
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      chown builder:builder /home/builder/PKGBUILD
+
+  - name: Build quickshell package
+    run: |
+      su builder -c "
+        export MAKEFLAGS='-j$(nproc)'
+        cd ~ && makepkg -s --noconfirm
+      "
+
+  - name: Prepare release files
+    id: pkg
+    run: |
+      mkdir -p release
+
+      CPP_PATH=$(find /home/builder/cpptrace -name "cpptrace-*.pkg.tar.zst" | head -n1)
+      if [ -f "$CPP_PATH" ]; then
+        cp "$CPP_PATH" release/
+      fi
+
+      QS_PATH=$(find /home/builder -maxdepth 1 -name "quickshell-git-*-x86_64.pkg.tar.zst" | head -n1)
+      if [ -f "$QS_PATH" ]; then
+        VERSION=$(basename "$QS_PATH" | sed -E 's/^quickshell-git-(.*)-x86_64\.pkg\.tar\.zst/\1/')
+        NEW_NAME="quickshell-git-${VERSION}-znver3.pkg.tar.zst"
+        cp "$QS_PATH" "release/$NEW_NAME"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+      fi
+
+  - name: Create GitHub Release
+    uses: softprops/action-gh-release@v2
+    with:
+      tag_name: ${{ steps.pkg.outputs.version }}-znver3
+      name: quickshell-git ${{ steps.pkg.outputs.version }} (Zen 3 Safe Optimized)
+      files: release/*.pkg.tar.zst
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
