@@ -1,4 +1,4 @@
-name: Build quickshell-git (Zen3 Optimized)
+name: Build quickshell-git (Zen3 Stable)
 
 permissions:
   contents: write
@@ -21,17 +21,9 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git sudo clang lld
 
-      - name: Enforce Zen3 + LTO globally
+      - name: Set parallel build
         run: |
-          sed -i 's/-march=x86-64/-march=znver3 -mtune=znver3/g' /etc/makepkg.conf
-          sed -i 's/-O2/-O2 -pipe -fomit-frame-pointer -fno-plt/g' /etc/makepkg.conf
           sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' /etc/makepkg.conf
-          sed -i 's/^#LTOFLAGS=.*/LTOFLAGS="-flto=auto"/' /etc/makepkg.conf
-
-          # switch to clang
-          sed -i 's/^CC=.*/CC=clang/' /etc/makepkg.conf
-          sed -i 's/^CXX=.*/CXX=clang++/' /etc/makepkg.conf
-          sed -i 's/^#RUSTFLAGS=.*/RUSTFLAGS="-C target-cpu=znver3"/' /etc/makepkg.conf
 
       - name: Install dependencies
         run: |
@@ -98,11 +90,12 @@ jobs:
           build() {
             cd quickshell
 
-            export CFLAGS="-O2 -march=znver3 -mtune=znver3 -pipe -fomit-frame-pointer -fno-plt"
-            export CXXFLAGS="$CFLAGS"
-            export LDFLAGS="-Wl,-O1,--as-needed"
             export CC=clang
             export CXX=clang++
+
+            export CFLAGS="-O2 -march=znver3 -mtune=znver3 -pipe"
+            export CXXFLAGS="$CFLAGS"
+            export LDFLAGS="-Wl,-O1,--as-needed"
 
             cmake -B build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
@@ -110,6 +103,7 @@ jobs:
               -DCMAKE_CXX_COMPILER=clang++ \
               -DCMAKE_C_FLAGS="$CFLAGS" \
               -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+              -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
               -DCMAKE_INSTALL_PREFIX=/usr \
               -DINSTALL_QML_PREFIX=lib/qt6/qml
 
