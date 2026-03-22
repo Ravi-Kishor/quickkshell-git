@@ -25,6 +25,10 @@ jobs:
         run: |
           sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' /etc/makepkg.conf
 
+      - name: Disable debug packages
+        run: |
+          sed -i 's/^OPTIONS=.*/OPTIONS=(strip !debug)/' /etc/makepkg.conf
+
       - name: Install dependencies
         run: |
           pacman -S --noconfirm \
