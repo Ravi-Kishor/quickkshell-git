@@ -3,10 +3,10 @@ name: Build quickshell-git
 permissions:
   contents: write
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */23 * * *"
+#on:
+  #workflow_dispatch:
+  #schedule:
+    #- cron: "0 */23 * * *"
 
 jobs:
   build:
